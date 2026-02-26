@@ -16,13 +16,25 @@ For tree search and simulation of the popular rogue-like deckbuilder game Slay T
 
 ### Installation
 
-To install the Python package and build the C++ extension, run:
+First, clone the repository and initialize submodules:
+
+```bash
+git clone https://github.com/keeganjebb/sts_lightspeed.git
+cd sts_lightspeed
+git submodule update --init --recursive
+```
+
+Then, install the Python package and build the C++ extension:
 
 ```bash
 pip install .
 ```
 
 Ensure you have a C++17 compatible compiler and CMake installed.
+
+### Development
+
+For detailed information on the environment structure, observation/action spaces, and how to contribute, please see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ### Usage
 

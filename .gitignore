@@ -4,3 +4,6 @@
 build/
 __pycache__/
 *.pyc
+*.so
+*.egg-info/
+gym_sts_lightspeed.egg-info/
