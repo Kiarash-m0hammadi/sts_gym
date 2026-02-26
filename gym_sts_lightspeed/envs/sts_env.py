@@ -29,7 +29,7 @@ class StsEnv(gym.Env):
 
         self.nn = slaythespire.getNNInterface()
 
-        # Observation space: based on NNInterface (412 elements)
+        # Observation space: based on NNInterface (1200 elements)
         self.observation_space = spaces.Box(
             low=0,
             high=np.array(self.nn.getObservationMaximums(), dtype=np.int32),

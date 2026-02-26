@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: gym_sts_lightspeed
+Version: 0.0.1
+Summary: A high-performance Slay the Spire Gymnasium environment
+Author: Keegan Jebb
+Author-email: keeganjebb@gmail.com
+License-File: LICENSE.md
+Requires-Dist: gymnasium
+Requires-Dist: numpy
+Dynamic: author
+Dynamic: author-email
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: summary
