@@ -77,8 +77,15 @@ class StsEnv(gym.Env):
              # If no actions available but game not over, something is wrong
              return self._get_observation(), 0.0, True, False, self._get_info()
 
-        # Handle invalid action index by wrapping around (basic fallback)
-        idx = action_idx % len(self.available_actions)
+        # Handle invalid action index
+        if action_idx >= len(self.available_actions):
+            # Penalty for invalid action
+            reward = -1.0
+            idx = 0 # Default to first action
+        else:
+            reward = 0
+            idx = action_idx
+
         action = self.available_actions[idx]
 
         # Execute action
@@ -98,7 +105,7 @@ class StsEnv(gym.Env):
                 self.bc.init(self.gc)
 
         obs = self._get_observation()
-        reward = self._get_reward()
+        reward += self._get_reward()
         terminated = (self.gc.outcome != slaythespire.GameOutcome.UNDECIDED)
         truncated = False
         info = self._get_info()
@@ -106,8 +113,8 @@ class StsEnv(gym.Env):
         return obs, reward, terminated, truncated, info
 
     def _get_observation(self):
-        # Current observation only uses GameContext through NNInterface
-        obs = np.array(self.nn.getObservation(self.gc), dtype=np.int32)
+        # Pass both GameContext and BattleContext to NNInterface
+        obs = np.array(self.nn.getObservation(self.gc, self.bc), dtype=np.int32)
         return obs
 
     def _get_info(self):
@@ -120,8 +127,12 @@ class StsEnv(gym.Env):
             screen = str(self.gc.screen_state)
             hp = self.gc.cur_hp
 
+        mask = np.zeros(self.MAX_ACTIONS, dtype=np.int8)
+        mask[:min(len(self.available_actions), self.MAX_ACTIONS)] = 1
+
         return {
             "screen": screen,
+            "action_mask": mask,
             "available_actions_count": len(self.available_actions),
             "floor": self.gc.floor_num,
             "hp": hp,

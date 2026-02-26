@@ -14,10 +14,12 @@
 namespace sts {
 
     struct NNInterface {
-        static constexpr int observation_space_size = 412;
+        static constexpr int observation_space_size = 1200;
         static constexpr int playerHpMax = 200;
         static constexpr int playerGoldMax = 1800;
         static constexpr int cardCountMax = 7;
+        static constexpr int energyMax = 10;
+        static constexpr int blockMax = 200;
 
         const std::vector<int> cardEncodeMap;
         const std::unordered_map<MonsterEncounter, int> bossEncodeMap;
@@ -27,8 +29,9 @@ namespace sts {
         NNInterface();
 
         int getCardIdx(Card c) const;
+        int getCardIdx(CardId id, int upgradeCount) const;
         std::array<int,observation_space_size> getObservationMaximums() const;
-        std::array<int,observation_space_size> getObservation(const GameContext &gc) const;
+        std::array<int,observation_space_size> getObservation(const GameContext &gc, const BattleContext *bc = nullptr) const;
 
 
         static std::vector<int> createOneHotCardEncodingMap();
