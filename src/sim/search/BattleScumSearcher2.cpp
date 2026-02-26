@@ -174,23 +174,9 @@ void search::BattleScumSearcher2::playoutRandom(BattleContext &state, std::vecto
 
 void search::BattleScumSearcher2::enumerateActionsForNode(search::BattleScumSearcher2::Node &node,
                                                                const BattleContext &bc) {
-    switch (bc.inputState) {
-        case InputState::PLAYER_NORMAL:
-            enumerateCardActions(node, bc);
-            enumeratePotionActions(node, bc);
-            node.edges.push_back({Action(ActionType::END_TURN)});
-            break;
-
-        case InputState::CARD_SELECT:
-            enumerateCardSelectActions(node, bc);
-            break;
-
-        default:
-#ifdef sts_asserts
-            std::cerr << "enumerateActionsForNode: invalid input state: " << static_cast<int>(bc.inputState) << std::endl;
-            assert(false);
-#endif
-            break;
+    auto actions = Action::getAllActionsInState(bc);
+    for (auto a : actions) {
+        node.edges.push_back({a});
     }
 
 #ifdef sts_print_debug
@@ -204,185 +190,14 @@ void search::BattleScumSearcher2::enumerateActionsForNode(search::BattleScumSear
 
 void search::BattleScumSearcher2::enumerateCardActions(search::BattleScumSearcher2::Node &node,
                                                             const BattleContext &bc) {
-    if (!bc.isCardPlayAllowed()) {
-        return;
-    }
-
-    fixed_list<std::pair<int,int>, 10> playableHandIdxs;
-    for (int handIdx = 0; handIdx < bc.cards.cardsInHand; ++handIdx) {
-        const auto &c = bc.cards.hand[handIdx];
-        if (!c.canUseOnAnyTarget(bc)) {
-            continue;
-        }
-
-        bool isUniqueAction = true;
-
-        if (handIdx > 0) {
-            const auto &lastCard = bc.cards.hand[handIdx-1];
-
-            bool isEqualToLastCard = c.id == lastCard.id &&
-                    c.getUpgradeCount() == lastCard.getUpgradeCount() &&
-                    // both should be less than deck size c.uniqueId < bc.cards.deck
-                    c.costForTurn == lastCard.costForTurn &&
-                    c.cost == lastCard.cost &&
-                    c.freeToPlayOnce == lastCard.freeToPlayOnce &&
-                    c.specialData == lastCard.specialData;
-
-            if (isEqualToLastCard) {
-                isUniqueAction = false;
-            }
-        }
-
-        if (isUniqueAction) {
-            playableHandIdxs.push_back( {handIdx, search::Expert::getPlayOrdering(c.getId())} );
-        }
-    }
-
-    std::sort(playableHandIdxs.begin(), playableHandIdxs.end(), [](auto a, auto b) { return a.second < b.second; });
-
-    for (auto pair : playableHandIdxs) {
-        const auto handIdx = pair.first;
-        const auto &c = bc.cards.hand[handIdx];
-
-        if (c.requiresTarget()) {
-            for (int tIdx = bc.monsters.monsterCount-1; tIdx >= 0; --tIdx) {
-                if (!bc.monsters.arr[tIdx].isTargetable()) {
-                    continue;
-                }
-                node.edges.push_back({Action(ActionType::CARD, handIdx, tIdx)});
-            }
-        } else {
-            node.edges.push_back({Action(ActionType::CARD, handIdx)});
-        }
-    }
-
 }
 
 void search::BattleScumSearcher2::enumeratePotionActions(search::BattleScumSearcher2::Node &node,
                                                               const BattleContext &bc) {
-
-    const auto hasValidTarget = bc.monsters.getTargetableCount() > 0;
-
-    int foundPotions = 0;
-    for (int pIdx = 0; pIdx < bc.potionCapacity; ++pIdx) {
-
-        const auto p = bc.potions[pIdx];
-        if (p == Potion::EMPTY_POTION_SLOT) {
-            continue;
-        }
-        ++foundPotions;
-
-        // not enumerating the discard of a potion if it can be used
-        if (p == Potion::FAIRY_POTION) {
-            node.edges.push_back({Action(ActionType::POTION, pIdx, -1)});
-            continue;
-        }
-
-        if (!potionRequiresTarget(p)) {
-            node.edges.push_back({Action(ActionType::POTION, pIdx)});
-            continue;
-        }
-
-        // potion requires target
-        if (!hasValidTarget) {
-            node.edges.push_back({Action(ActionType::POTION, pIdx, -1)});
-            continue;
-        }
-
-        // there is a valid target
-        for (int tIdx = 0; tIdx < bc.monsters.monsterCount; ++tIdx) {
-            if (bc.monsters.arr[tIdx].isTargetable()) {
-                node.edges.push_back({Action(ActionType::POTION, pIdx, tIdx)});
-            }
-        }
-    }
-}
-
-template <typename ForwardIt>
-void setupCardOptionsHelper(search::BattleScumSearcher2::Node &node, const ForwardIt begin, const ForwardIt end, const std::function<bool(const CardInstance &)> &p= nullptr) {
-    for (int i = 0; begin+i != end; ++i) {
-        const auto &c = begin[i];
-        if (!p || (p(c))) {
-            node.edges.push_back(
-                    {search::Action(search::ActionType::SINGLE_CARD_SELECT, i)}
-                );
-        }
-    }
 }
 
 void search::BattleScumSearcher2::enumerateCardSelectActions(search::BattleScumSearcher2::Node &node,
                                                                   const BattleContext &bc) {
-
-    switch (bc.cardSelectInfo.cardSelectTask) {
-        case CardSelectTask::ARMAMENTS:
-            setupCardOptionsHelper( node, bc.cards.hand.begin(), bc.cards.hand.begin() + bc.cards.cardsInHand,
-                                    [] (const CardInstance &c) { return c.canUpgrade(); });
-            break;
-
-        case CardSelectTask::CODEX:
-            for (int i = 0; i < 4; ++i) { // i -> 3 action means skip
-                node.edges.push_back({Action(search::ActionType::SINGLE_CARD_SELECT, i)});
-            }
-            break;
-
-        case CardSelectTask::DISCOVERY:
-            for (int i = 0; i < 3; ++i) {
-                node.edges.push_back({Action(search::ActionType::SINGLE_CARD_SELECT, i)});
-            }
-            break;
-
-        case CardSelectTask::DUAL_WIELD:
-            setupCardOptionsHelper( node, bc.cards.hand.begin(), bc.cards.hand.begin() + bc.cards.cardsInHand,
-                                    [] (const CardInstance &c) {
-                                        return c.getType() == CardType::POWER || c.getType() == CardType::ATTACK;
-                                    });
-            break;
-
-        case CardSelectTask::EXHUME:
-            setupCardOptionsHelper(node, bc.cards.exhaustPile.begin(), bc.cards.exhaustPile.end(),
-                                   [](const auto &c) { return c.getId() != CardId::EXHUME; });
-            break;
-
-        case CardSelectTask::EXHAUST_ONE:
-            setupCardOptionsHelper(node, bc.cards.hand.begin(), bc.cards.hand.begin() + bc.cards.cardsInHand);
-            break;
-
-        case CardSelectTask::FORETHOUGHT:
-        case CardSelectTask::WARCRY:
-            setupCardOptionsHelper(node, bc.cards.hand.begin(), bc.cards.hand.begin() + bc.cards.cardsInHand);
-            break;
-
-        case CardSelectTask::HEADBUTT:
-        case CardSelectTask::LIQUID_MEMORIES_POTION:
-            setupCardOptionsHelper(node, bc.cards.discardPile.begin(), bc.cards.discardPile.end());
-            break;
-
-        case CardSelectTask::SECRET_TECHNIQUE:
-            setupCardOptionsHelper(node, bc.cards.drawPile.begin(), bc.cards.drawPile.end(),
-                                    [] (const CardInstance &c) {
-                                        return c.getType() == CardType::SKILL;
-                                    });
-            break;
-
-        case CardSelectTask::SECRET_WEAPON:
-            setupCardOptionsHelper(node, bc.cards.drawPile.begin(), bc.cards.drawPile.end(),
-                                    [] (const CardInstance &c) {
-                                        return c.getType() == CardType::ATTACK;
-                                    });
-            break;
-
-        case CardSelectTask::EXHAUST_MANY:
-        case CardSelectTask::GAMBLE:
-            // just dont deal with this right now
-            node.edges.push_back({search::Action(search::ActionType::MULTI_CARD_SELECT, 0)});
-            break;
-
-        default:
-#ifdef sts_asserts
-            assert(false);
-#endif
-            break;
-    }
 }
 
 double getNonMinionMonsterCurHpRatio(const BattleContext &bc) {

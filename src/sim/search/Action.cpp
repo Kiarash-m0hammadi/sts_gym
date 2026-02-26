@@ -3,6 +3,7 @@
 //
 
 #include "sim/search/Action.h"
+#include "sim/search/ExpertKnowledge.h"
 
 #include <functional>
 
@@ -474,6 +475,100 @@ void setupCardOptionsHelper(std::vector<search::Action> &actions, const ForwardI
     }
 }
 
+void enumerateCardActions(std::vector<search::Action> &actions, const BattleContext &bc) {
+    if (!bc.isCardPlayAllowed()) {
+        return;
+    }
+
+    fixed_list<std::pair<int,int>, 10> playableHandIdxs;
+    for (int handIdx = 0; handIdx < bc.cards.cardsInHand; ++handIdx) {
+        const auto &c = bc.cards.hand[handIdx];
+        if (!c.canUseOnAnyTarget(bc)) {
+            continue;
+        }
+
+        bool isUniqueAction = true;
+
+        if (handIdx > 0) {
+            const auto &lastCard = bc.cards.hand[handIdx-1];
+
+            bool isEqualToLastCard = c.id == lastCard.id &&
+                    c.getUpgradeCount() == lastCard.getUpgradeCount() &&
+                    // both should be less than deck size c.uniqueId < bc.cards.deck
+                    c.costForTurn == lastCard.costForTurn &&
+                    c.cost == lastCard.cost &&
+                    c.freeToPlayOnce == lastCard.freeToPlayOnce &&
+                    c.specialData == lastCard.specialData;
+
+            if (isEqualToLastCard) {
+                isUniqueAction = false;
+            }
+        }
+
+        if (isUniqueAction) {
+            playableHandIdxs.push_back( {handIdx, search::Expert::getPlayOrdering(c.getId())} );
+        }
+    }
+
+    std::sort(playableHandIdxs.begin(), playableHandIdxs.end(), [](auto a, auto b) { return a.second < b.second; });
+
+    for (auto pair : playableHandIdxs) {
+        const auto handIdx = pair.first;
+        const auto &c = bc.cards.hand[handIdx];
+
+        if (c.requiresTarget()) {
+            for (int tIdx = bc.monsters.monsterCount-1; tIdx >= 0; --tIdx) {
+                if (!bc.monsters.arr[tIdx].isTargetable()) {
+                    continue;
+                }
+                actions.push_back({search::Action(search::ActionType::CARD, handIdx, tIdx)});
+            }
+        } else {
+            actions.push_back({search::Action(search::ActionType::CARD, handIdx)});
+        }
+    }
+
+}
+
+void enumeratePotionActions(std::vector<search::Action> &actions, const BattleContext &bc) {
+
+    const auto hasValidTarget = bc.monsters.getTargetableCount() > 0;
+
+    int foundPotions = 0;
+    for (int pIdx = 0; pIdx < bc.potionCapacity; ++pIdx) {
+
+        const auto p = bc.potions[pIdx];
+        if (p == Potion::EMPTY_POTION_SLOT) {
+            continue;
+        }
+        ++foundPotions;
+
+        // not enumerating the discard of a potion if it can be used
+        if (p == sts::Potion::FAIRY_POTION) {
+            actions.push_back({search::Action(search::ActionType::POTION, pIdx, -1)});
+            continue;
+        }
+
+        if (!potionRequiresTarget(p)) {
+            actions.push_back({search::Action(search::ActionType::POTION, pIdx)});
+            continue;
+        }
+
+        // potion requires target
+        if (!hasValidTarget) {
+            actions.push_back({search::Action(search::ActionType::POTION, pIdx, -1)});
+            continue;
+        }
+
+        // there is a valid target
+        for (int tIdx = 0; tIdx < bc.monsters.monsterCount; ++tIdx) {
+            if (bc.monsters.arr[tIdx].isTargetable()) {
+                actions.push_back({search::Action(search::ActionType::POTION, pIdx, tIdx)});
+            }
+        }
+    }
+}
+
 std::vector<search::Action> search::Action::enumerateCardSelectActions(const BattleContext &bc) {
     std::vector<search::Action> actions;
 
@@ -545,6 +640,25 @@ std::vector<search::Action> search::Action::enumerateCardSelectActions(const Bat
 #ifdef sts_asserts
             assert(false);
 #endif
+            break;
+    }
+    return actions;
+}
+
+std::vector<search::Action> search::Action::getAllActionsInState(const BattleContext &bc) {
+    std::vector<search::Action> actions;
+
+    switch (bc.inputState) {
+        case InputState::PLAYER_NORMAL:
+            enumerateCardActions(actions, bc);
+            enumeratePotionActions(actions, bc);
+            actions.push_back({Action(ActionType::END_TURN)});
+            break;
+
+        case InputState::CARD_SELECT:
+            return enumerateCardSelectActions(bc);
+
+        default:
             break;
     }
     return actions;
