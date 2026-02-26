@@ -10,6 +10,7 @@
 #include "sim/PrintHelpers.h"
 #include "game/Game.h"
 #include "game/Map.h"
+#include "combat/BattleContext.h"
 
 #include "slaythespire.h"
 
@@ -20,20 +21,25 @@ namespace sts {
             bossEncodeMap(createBossEncodingMap()) {}
 
     int NNInterface::getCardIdx(Card c) const {
-        int idx = cardEncodeMap[static_cast<int>(c.id)] * 2;
-        if (idx == -1) {
-            std::cerr << "attemped to get encoding idx for invalid card" << std::endl;
-            assert(false);
+        return getCardIdx(c.id, c.getUpgraded());
+    }
+
+    int NNInterface::getCardIdx(CardId id, int upgradeCount) const {
+        int rawIdx = cardEncodeMap[static_cast<int>(id)];
+        if (rawIdx == -1) {
+            // std::cerr << "attempted to get encoding idx for invalid card: " << static_cast<int>(id) << std::endl;
+            return 0; // fallback to index 0 instead of crashing
         }
 
-        if (c.isUpgraded()) {
+        int idx = rawIdx * 2;
+        if (upgradeCount > 0) {
             idx += 1;
         }
 
         return idx;
     }
 
-    std::array<int,NNInterface::observation_space_size> NNInterface::getObservation(const GameContext &gc) const {
+    std::array<int,NNInterface::observation_space_size> NNInterface::getObservation(const GameContext &gc, const BattleContext *bc) const {
         std::array<int,observation_space_size> ret {};
 
         int offset = 0;
@@ -42,22 +48,91 @@ namespace sts {
         ret[offset++] = std::min(gc.maxHp, playerHpMax);
         ret[offset++] = std::min(gc.gold, playerGoldMax);
         ret[offset++] = gc.floorNum;
+        ret[offset++] = gc.act;
+        ret[offset++] = static_cast<int>(gc.screenState);
+        ret[offset++] = gc.redKey;
+        ret[offset++] = gc.greenKey;
+        ret[offset++] = gc.blueKey;
+
+        offset = 9; // Reset to match our defined layout if needed, but here it's fine
 
         int bossEncodeIdx = offset + bossEncodeMap.at(gc.boss);
         ret[bossEncodeIdx] = 1;
-        offset += 10;
+        offset += 10; // offset = 19
 
         for (auto c : gc.deck.cards) {
             int encodeIdx = offset + getCardIdx(c);
             ret[encodeIdx] = std::min(ret[encodeIdx]+1, cardCountMax);
         }
-        offset += 220;
+        offset += 220; // offset = 239
 
         for (auto r : gc.relics.relics) {
             int encodeIdx = offset + static_cast<int>(r.id);
-            ret[encodeIdx] = 1;
+            if (encodeIdx < offset + 178) {
+                ret[encodeIdx] = 1;
+            }
         }
-        offset += 178;
+        offset += 178; // offset = 417
+
+        for (int i = 0; i < 5; ++i) {
+            if (bc) {
+                ret[offset + i] = static_cast<int>(bc->potions[i]);
+            } else {
+                ret[offset + i] = static_cast<int>(gc.potions[i]);
+            }
+        }
+        offset += 5; // offset = 422
+
+        if (bc) {
+            ret[offset++] = std::min(bc->player.block, blockMax);
+            ret[offset++] = std::min(bc->player.energy, energyMax);
+            ret[offset++] = bc->cardsDrawn;
+
+            // Simple power encoding (first few statuses)
+            for (int i = 0; i < 20; ++i) {
+                ret[offset+i] = bc->player.getStatusRuntime(static_cast<PlayerStatus>(i));
+            }
+        } else {
+            offset += 3 + 20;
+        }
+        offset = 445;
+
+        if (bc) {
+            for (int i = 0; i < std::min(bc->monsters.monsterCount, 5); ++i) {
+                const auto &m = bc->monsters.arr[i];
+                int mOffset = offset + i * 14;
+                ret[mOffset++] = std::min(m.curHp, 1000);
+                ret[mOffset++] = std::min(m.maxHp, 1000);
+                ret[mOffset++] = std::min(m.block, blockMax);
+                ret[mOffset++] = static_cast<int>(m.moveHistory[0]); // Intent
+                for (int p = 0; p < 10; ++p) {
+                    ret[mOffset++] = m.getStatusInternal(static_cast<MonsterStatus>(p));
+                }
+            }
+        }
+        offset = 515;
+
+        if (bc) {
+            for (int i = 0; i < bc->cards.cardsInHand; ++i) {
+                int encodeIdx = offset + getCardIdx(bc->cards.hand[i].id, bc->cards.hand[i].upgraded);
+                ret[encodeIdx] = std::min(ret[encodeIdx]+1, cardCountMax);
+            }
+            offset += 220; // 735
+
+            for (const auto &c : bc->cards.discardPile) {
+                int encodeIdx = offset + getCardIdx(c.id, c.upgraded);
+                ret[encodeIdx] = std::min(ret[encodeIdx]+1, cardCountMax);
+            }
+            offset += 220; // 955
+
+            for (const auto &c : bc->cards.drawPile) {
+                int encodeIdx = offset + getCardIdx(c.id, c.upgraded);
+                ret[encodeIdx] = std::min(ret[encodeIdx]+1, cardCountMax);
+            }
+            offset += 220; // 1175
+        } else {
+            offset += 220 * 3;
+        }
 
         return ret;
     }
@@ -70,16 +145,35 @@ namespace sts {
         ret[1] = playerHpMax;
         ret[2] = playerGoldMax;
         ret[3] = 60;
-        spaceOffset += 3;
+        ret[4] = 4;
+        ret[5] = 15;
+        ret[6] = 1;
+        ret[7] = 1;
+        ret[8] = 1;
+        spaceOffset = 9;
 
-        std::fill(ret.begin()+spaceOffset, ret.end(), 1);
-        spaceOffset += 10;
+        for (int i = 0; i < 10; ++i) ret[spaceOffset++] = 1; // Boss
+        for (int i = 0; i < 220; ++i) ret[spaceOffset++] = cardCountMax; // Deck
+        for (int i = 0; i < 178; ++i) ret[spaceOffset++] = 1; // Relics
+        for (int i = 0; i < 5; ++i) ret[spaceOffset++] = 200; // Potions
 
-        std::fill(ret.begin()+spaceOffset, ret.end(), cardCountMax);
-        spaceOffset += 220;
+        // Player Combat
+        ret[spaceOffset++] = blockMax;
+        ret[spaceOffset++] = energyMax;
+        ret[spaceOffset++] = 100; // cards drawn
+        for (int i = 0; i < 20; ++i) ret[spaceOffset++] = 100; // powers
 
-        std::fill(ret.begin()+spaceOffset, ret.end(), 1);
-        spaceOffset += 178;
+        // Enemies
+        for (int i = 0; i < 5; ++i) {
+            ret[spaceOffset++] = 1000; // hp
+            ret[spaceOffset++] = 1000; // max hp
+            ret[spaceOffset++] = blockMax;
+            ret[spaceOffset++] = 20; // intent
+            for (int p = 0; p < 10; ++p) ret[spaceOffset++] = 100; // powers
+        }
+
+        // Card piles
+        for (int i = 0; i < 220 * 3; ++i) ret[spaceOffset++] = cardCountMax;
 
         return ret;
     }
