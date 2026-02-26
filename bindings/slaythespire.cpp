@@ -15,6 +15,13 @@
 #include "sim/SimHelpers.h"
 #include "sim/PrintHelpers.h"
 #include "game/Game.h"
+#include "combat/BattleContext.h"
+#include "combat/Player.h"
+#include "combat/MonsterGroup.h"
+#include "combat/Monster.h"
+#include "combat/InputState.h"
+#include "sim/search/Action.h"
+#include "sim/search/GameAction.h"
 
 #include "slaythespire.h"
 
@@ -31,7 +38,7 @@ PYBIND11_MODULE(slaythespire, m) {
     pybind11::class_<NNInterface> nnInterface(m, "NNInterface");
     nnInterface.def("getObservation", &NNInterface::getObservation, "get observation array given a GameContext")
         .def("getObservationMaximums", &NNInterface::getObservationMaximums, "get the defined maximum values of the observation space")
-        .def_property_readonly("observation_space_size", []() { return NNInterface::observation_space_size; });
+        .def_property_readonly("observation_space_size", [](const NNInterface&) { return NNInterface::observation_space_size; });
 
     pybind11::class_<search::ScumSearchAgent2> agent(m, "Agent");
     agent.def(pybind11::init<>());
@@ -103,7 +110,66 @@ PYBIND11_MODULE(slaythespire, m) {
 
         .def_readwrite("shop_remove_count", &GameContext::shopRemoveCount)
         .def_readwrite("speedrun_pace", &GameContext::speedrunPace)
-        .def_readwrite("note_for_yourself_card", &GameContext::noteForYourselfCard);
+        .def_readwrite("note_for_yourself_card", &GameContext::noteForYourselfCard)
+        .def("get_possible_actions", &search::GameAction::getAllActionsInState);
+
+    pybind11::class_<Player> player(m, "Player");
+    player.def_readwrite("cur_hp", &Player::curHp)
+        .def_readwrite("max_hp", &Player::maxHp)
+        .def_readwrite("gold", &Player::gold)
+        .def_readwrite("energy", &Player::energy)
+        .def_readwrite("block", &Player::block);
+
+    pybind11::class_<Monster> monster(m, "Monster");
+    monster.def_readwrite("cur_hp", &Monster::curHp)
+        .def_readwrite("max_hp", &Monster::maxHp)
+        .def_readwrite("block", &Monster::block)
+        .def_readwrite("id", &Monster::id)
+        .def("is_alive", &Monster::isAlive);
+
+    pybind11::class_<MonsterGroup> monsterGroup(m, "MonsterGroup");
+    monsterGroup.def_readwrite("monsters_alive", &MonsterGroup::monstersAlive)
+        .def_readwrite("monster_count", &MonsterGroup::monsterCount)
+        .def_property_readonly("monsters", [](const MonsterGroup &mg) {
+            std::vector<Monster> monsters;
+            for (int i = 0; i < mg.monsterCount; ++i) {
+                monsters.push_back(mg.arr[i]);
+            }
+            return monsters;
+        });
+
+    pybind11::class_<BattleContext> battleContext(m, "BattleContext");
+    battleContext.def(pybind11::init<>())
+        .def("init", pybind11::overload_cast<const GameContext &>(&BattleContext::init))
+        .def("exit_battle", &BattleContext::exitBattle)
+        .def("get_possible_actions", &search::Action::getAllActionsInState)
+        .def_readwrite("outcome", &BattleContext::outcome)
+        .def_readwrite("input_state", &BattleContext::inputState)
+        .def_readwrite("turn", &BattleContext::turn)
+        .def_readwrite("seed", &BattleContext::seed)
+        .def_readwrite("floor_num", &BattleContext::floorNum)
+        .def_readwrite("player", &BattleContext::player)
+        .def_readwrite("monsters", &BattleContext::monsters);
+
+    pybind11::class_<search::Action> action(m, "Action");
+    action.def(pybind11::init<std::uint32_t>())
+        .def_readwrite("bits", &search::Action::bits)
+        .def("execute", &search::Action::execute)
+        .def("__repr__", [](const search::Action &a) {
+            std::ostringstream oss;
+            oss << "<slaythespire.Action bits=" << std::hex << a.bits << ">";
+            return oss.str();
+        });
+
+    pybind11::class_<search::GameAction> gameAction(m, "GameAction");
+    gameAction.def(pybind11::init<std::uint32_t>())
+        .def_readwrite("bits", &search::GameAction::bits)
+        .def("execute", &search::GameAction::execute)
+        .def("__repr__", [](const search::GameAction &a) {
+            std::ostringstream oss;
+            oss << "<slaythespire.GameAction bits=" << std::hex << a.bits << ">";
+            return oss.str();
+        });
 
     pybind11::class_<RelicInstance> relic(m, "Relic");
     relic.def_readwrite("id", &RelicInstance::id)
@@ -149,6 +215,45 @@ PYBIND11_MODULE(slaythespire, m) {
     gameOutcome.value("UNDECIDED", GameOutcome::UNDECIDED)
         .value("PLAYER_VICTORY", GameOutcome::PLAYER_VICTORY)
         .value("PLAYER_LOSS", GameOutcome::PLAYER_LOSS);
+
+    pybind11::enum_<InputState> inputState(m, "InputState");
+    inputState.value("EXECUTING_ACTIONS", InputState::EXECUTING_ACTIONS)
+        .value("PLAYER_NORMAL", InputState::PLAYER_NORMAL)
+        .value("CARD_SELECT", InputState::CARD_SELECT)
+        .value("CHOOSE_STANCE_ACTION", InputState::CHOOSE_STANCE_ACTION)
+        .value("CHOOSE_TOOLBOX_COLORLESS_CARD", InputState::CHOOSE_TOOLBOX_COLORLESS_CARD)
+        .value("CHOOSE_EXHAUST_POTION_CARDS", InputState::CHOOSE_EXHAUST_POTION_CARDS)
+        .value("CHOOSE_GAMBLING_CARDS", InputState::CHOOSE_GAMBLING_CARDS)
+        .value("CHOOSE_ENTROPIC_BREW_DISCARD_POTIONS", InputState::CHOOSE_ENTROPIC_BREW_DISCARD_POTIONS)
+        .value("CHOOSE_DISCARD_CARDS", InputState::CHOOSE_DISCARD_CARDS)
+        .value("SCRY", InputState::SCRY)
+        .value("SELECT_ENEMY_ACTIONS", InputState::SELECT_ENEMY_ACTIONS)
+        .value("FILL_RANDOM_POTIONS", InputState::FILL_RANDOM_POTIONS)
+        .value("SHUFFLE_INTO_DRAW_BURN", InputState::SHUFFLE_INTO_DRAW_BURN)
+        .value("SHUFFLE_INTO_DRAW_VOID", InputState::SHUFFLE_INTO_DRAW_VOID)
+        .value("SHUFFLE_INTO_DRAW_DAZED", InputState::SHUFFLE_INTO_DRAW_DAZED)
+        .value("SHUFFLE_INTO_DRAW_WOUND", InputState::SHUFFLE_INTO_DRAW_WOUND)
+        .value("SHUFFLE_INTO_DRAW_SLIMED", InputState::SHUFFLE_INTO_DRAW_SLIMED)
+        .value("SHUFFLE_INTO_DRAW_ALL_STATUS", InputState::SHUFFLE_INTO_DRAW_ALL_STATUS)
+        .value("SHUFFLE_CUR_CARD_INTO_DRAW", InputState::SHUFFLE_CUR_CARD_INTO_DRAW)
+        .value("SHUFFLE_DISCARD_TO_DRAW", InputState::SHUFFLE_DISCARD_TO_DRAW)
+        .value("INITIAL_SHUFFLE", InputState::INITIAL_SHUFFLE)
+        .value("CREATE_RANDOM_CARD_IN_HAND_POWER", InputState::CREATE_RANDOM_CARD_IN_HAND_POWER)
+        .value("CREATE_RANDOM_CARD_IN_HAND_COLORLESS", InputState::CREATE_RANDOM_CARD_IN_HAND_COLORLESS)
+        .value("CREATE_RANDOM_CARD_IN_HAND_DEAD_BRANCH", InputState::CREATE_RANDOM_CARD_IN_HAND_DEAD_BRANCH)
+        .value("SELECT_CARD_IN_HAND_EXHAUST", InputState::SELECT_CARD_IN_HAND_EXHAUST)
+        .value("GENERATE_NILRY_CARDS", InputState::GENERATE_NILRY_CARDS)
+        .value("EXHAUST_RANDOM_CARD_IN_HAND", InputState::EXHAUST_RANDOM_CARD_IN_HAND)
+        .value("SELECT_STRANGE_SPOON_PROC", InputState::SELECT_STRANGE_SPOON_PROC)
+        .value("SELECT_ENEMY_THE_SPECIMEN_APPLY_POISON", InputState::SELECT_ENEMY_THE_SPECIMEN_APPLY_POISON)
+        .value("SELECT_WARPED_TONGS_CARD", InputState::SELECT_WARPED_TONGS_CARD)
+        .value("CREATE_ENCHIRIDION_POWER", InputState::CREATE_ENCHIRIDION_POWER)
+        .value("SELECT_CONFUSED_CARD_COST", InputState::SELECT_CONFUSED_CARD_COST);
+
+    pybind11::enum_<Outcome> battleOutcome(m, "BattleOutcome");
+    battleOutcome.value("UNDECIDED", Outcome::UNDECIDED)
+        .value("PLAYER_VICTORY", Outcome::PLAYER_VICTORY)
+        .value("PLAYER_LOSS", Outcome::PLAYER_LOSS);
 
     pybind11::enum_<ScreenState> screenState(m, "ScreenState");
     screenState.value("INVALID", ScreenState::INVALID)
@@ -197,6 +302,22 @@ PYBIND11_MODULE(slaythespire, m) {
         .value("COLORLESS", CardColor::COLORLESS)
         .value("CURSE", CardColor::CURSE)
         .value("INVALID", CardColor::INVALID);
+
+    pybind11::enum_<search::ActionType> actionType(m, "ActionType");
+    actionType.value("CARD", search::ActionType::CARD)
+        .value("POTION", search::ActionType::POTION)
+        .value("SINGLE_CARD_SELECT", search::ActionType::SINGLE_CARD_SELECT)
+        .value("MULTI_CARD_SELECT", search::ActionType::MULTI_CARD_SELECT)
+        .value("END_TURN", search::ActionType::END_TURN);
+
+    pybind11::enum_<search::GameAction::RewardsActionType> rewardsActionType(m, "RewardsActionType");
+    rewardsActionType.value("CARD", search::GameAction::RewardsActionType::CARD)
+        .value("GOLD", search::GameAction::RewardsActionType::GOLD)
+        .value("KEY", search::GameAction::RewardsActionType::KEY)
+        .value("POTION", search::GameAction::RewardsActionType::POTION)
+        .value("RELIC", search::GameAction::RewardsActionType::RELIC)
+        .value("CARD_REMOVE", search::GameAction::RewardsActionType::CARD_REMOVE)
+        .value("SKIP", search::GameAction::RewardsActionType::SKIP);
 
     pybind11::enum_<CardType>(m, "CardType")
         .value("ATTACK", CardType::ATTACK)
