@@ -1,32 +1,76 @@
 # sts_lightspeed
 
-For tree search and simulation of the popular rogue-like deckbuilder game Slay The Spire
+For tree search and simulation of the popular rogue-like deckbuilder game Slay The Spire.
 
 **Features**
-* c++ 17 compiled with gcc
-* Standalone
-* Designed to be 100% RNG accurate*
+* C++ 17 compiled with GCC/Clang
+* Standalone simulator
+* Designed to be 100% RNG accurate
 * Playable in console
 * Speed: 1M random playouts in 5s with 16 threads
-* Loading from save files (loading into combat currently only supported)
-* Tree Search (best result, knowing the state of the game's rng)
+* Gymnasium environment for reinforcement learning
 
-**Planned Features**
-* Tree search of possible game outcomes (not given the state of rng)
+## Python API & Gymnasium Environment
 
-**Implementation Progress**
+`sts_lightspeed` provides a high-performance [Gymnasium](https://gymnasium.farama.org/) (formerly OpenAI Gym) environment for training AI agents.
+
+### Installation
+
+To install the Python package and build the C++ extension, run:
+
+```bash
+pip install .
+```
+
+Ensure you have a C++17 compatible compiler and CMake installed.
+
+### Usage
+
+The environment is registered with the ID `STS-v0`.
+
+```python
+import gymnasium as gym
+import gym_sts_lightspeed
+
+env = gym.make("STS-v0", ascension=0)
+obs, info = env.reset()
+
+terminated = False
+while not terminated:
+    # Use action mask to sample valid actions
+    action = env.action_space.sample(info['action_mask'])
+    obs, reward, terminated, truncated, info = env.step(action)
+
+    print(f"Floor: {info['floor']}, Reward: {reward}")
+```
+
+### Observation Space
+The observation is a 1200-element integer vector representing the game state, including:
+- Player HP, Gold, Floor, Act
+- Deck composition
+- Relics
+- Hand, Draw pile, and Discard pile
+- Combat state (Enemy HP, Intents, Blocks, etc.)
+
+### Action Space
+The action space is `Discrete(128)`. Since the number of valid actions varies by state, an `action_mask` is provided in the `info` dictionary to filter valid actions.
+
+### Rewards
+The default reward function includes:
+- +10.0 for each floor progressed.
+- ±1.0 for each point of HP change.
+- +1000.0 for winning the game.
+- -100.0 for losing the game.
+
+## C++ Development
+
+### Build tips
+* If your build fails with an error about not-return-only `constexpr` methods, ensure your compiler supports C++17.
+* CMake is used for building the project. For Python bindings, it is recommended to use the `setup.py` as described above.
+
+## Implementation Progress
 * All enemies
 * All relics
 * All Ironclad cards
 * All colorless cards
-* Everything outside of combat / all acts
-
-**Getting Started**
-* The project was built with Clion2021 and the [mingw64 toolchain](https://www.msys2.org/) on Windows 10
-* The main target creates a simulator of the game that can be played in console.
-* The test target creates a program with various commands that can be run, including random simulation
-* Click the star button at the top of the repo :)
-
-**Build tips**
-* If your build fails with an error about not-return-only `constexpr` methods, ensure your compiler supports c++17.
-* If CLion shows an error about not finding python libs when loading the cmake project, try opening CLion from the msys2 shell.
+* Most game events and non-combat rooms
